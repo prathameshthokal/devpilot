@@ -38,6 +38,12 @@ type CodeResult = {
   files: CodeFile[];
 };
 
+type TestResult = {
+  status: "passed" | "failed" | "no_tests_found";
+  exit_code: number;
+  output: string;
+};
+
 export default function Dashboard() {
   const searchParams = useSearchParams();
   const userId = searchParams.get("user_id");
@@ -61,6 +67,10 @@ export default function Dashboard() {
   const [code, setCode] = useState<CodeResult | null>(null);
   const [codeLoading, setCodeLoading] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
+
+  const [test, setTest] = useState<TestResult | null>(null);
+  const [testLoading, setTestLoading] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -100,6 +110,7 @@ export default function Dashboard() {
     setFilesLoading(true);
     setPlan(null);
     setCode(null);
+    setTest(null);
 
     fetch(`http://localhost:8000/repos/${userId}/${user.username}/${repoName}/tree`)
       .then((res) => res.json())
@@ -121,6 +132,7 @@ export default function Dashboard() {
     setPlanError(null);
     setPlan(null);
     setCode(null);
+    setTest(null);
 
     fetch("http://localhost:8000/plan", {
       method: "POST",
@@ -150,6 +162,7 @@ export default function Dashboard() {
     setCodeLoading(true);
     setCodeError(null);
     setCode(null);
+    setTest(null);
 
     fetch("http://localhost:8000/code", {
       method: "POST",
@@ -173,6 +186,38 @@ export default function Dashboard() {
       })
       .catch(() => setCodeError("Couldn't reach backend."))
       .finally(() => setCodeLoading(false));
+  }
+
+  function handleRunTests() {
+    if (!userId || !user || !selectedRepo || !code) return;
+
+    setTestLoading(true);
+    setTestError(null);
+    setTest(null);
+
+    fetch("http://localhost:8000/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        owner: user.username,
+        repo: selectedRepo,
+        files: code.files.map((f) => ({
+          path: f.path,
+          new_content: f.new_content,
+        })),
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) {
+          setTestError(data.error);
+        } else {
+          setTest(data);
+        }
+      })
+      .catch(() => setTestError("Couldn't reach backend."))
+      .finally(() => setTestLoading(false));
   }
 
   if (!userId) {
@@ -320,7 +365,41 @@ export default function Dashboard() {
       {code && (
         <div className="w-full max-w-3xl">
           <h2 className="text-xl font-semibold mb-2">Generated Code Changes</h2>
-          <p className="text-gray-400 mb-6">{code.summary}</p>
+          <p className="text-gray-400 mb-4">{code.summary}</p>
+
+          <button
+            onClick={handleRunTests}
+            disabled={testLoading}
+            className="mb-6 px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-500 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {testLoading ? "Running tests in sandbox..." : "Run Tests"}
+          </button>
+
+          {testError && <p className="text-red-400 mb-4">{testError}</p>}
+
+          {test && (
+            <div
+              className={`mb-6 border rounded-lg p-4 ${
+                test.status === "passed"
+                  ? "border-green-600 bg-green-950"
+                  : test.status === "no_tests_found"
+                  ? "border-yellow-600 bg-yellow-950"
+                  : "border-red-600 bg-red-950"
+              }`}
+            >
+              <p className="font-semibold mb-2">
+                {test.status === "passed" && "✔ Tests passed"}
+                {test.status === "no_tests_found" && "No tests found in this repo"}
+                {test.status === "failed" && "✘ Tests failed"}
+                <span className="text-gray-400 font-normal ml-2 text-sm">
+                  (exit code {test.exit_code})
+                </span>
+              </p>
+              <pre className="text-xs font-mono whitespace-pre-wrap max-h-64 overflow-y-auto text-gray-300">
+                {test.output}
+              </pre>
+            </div>
+          )}
 
           {code.files.map((file) => (
             <div key={file.path} className="mb-8 border border-gray-700 rounded-lg overflow-hidden">
