@@ -20,6 +20,12 @@ type FileEntry = {
   type: "blob" | "tree";
 };
 
+type PlanResult = {
+  task: string;
+  relevant_files: string[];
+  plan: string[];
+};
+
 export default function Dashboard() {
   const searchParams = useSearchParams();
   const userId = searchParams.get("user_id");
@@ -34,6 +40,11 @@ export default function Dashboard() {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [treeError, setTreeError] = useState<string | null>(null);
+
+  const [task, setTask] = useState("");
+  const [plan, setPlan] = useState<PlanResult | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -71,6 +82,7 @@ export default function Dashboard() {
     setFiles([]);
     setTreeError(null);
     setFilesLoading(true);
+    setPlan(null); // reset any previous plan when switching repos
 
     fetch(`http://localhost:8000/repos/${userId}/${user.username}/${repoName}/tree`)
       .then((res) => res.json())
@@ -83,6 +95,35 @@ export default function Dashboard() {
       })
       .catch(() => setTreeError("Couldn't reach backend."))
       .finally(() => setFilesLoading(false));
+  }
+
+  function handleGeneratePlan() {
+    if (!userId || !user || !selectedRepo || !task.trim()) return;
+
+    setPlanLoading(true);
+    setPlanError(null);
+    setPlan(null);
+
+    fetch("http://localhost:8000/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        owner: user.username,
+        repo: selectedRepo,
+        task: task.trim(),
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) {
+          setPlanError(data.error);
+        } else {
+          setPlan(data);
+        }
+      })
+      .catch(() => setPlanError("Couldn't reach backend."))
+      .finally(() => setPlanLoading(false));
   }
 
   if (!userId) {
@@ -155,10 +196,9 @@ export default function Dashboard() {
           </h2>
 
           {filesLoading && <p className="text-gray-500">Loading files...</p>}
-
           {treeError && <p className="text-red-400">{treeError}</p>}
 
-          <ul className="font-mono text-sm space-y-1">
+          <ul className="font-mono text-sm space-y-1 max-h-64 overflow-y-auto border border-gray-800 rounded-lg p-3">
             {files.map((file) => (
               <li
                 key={file.path}
@@ -168,6 +208,55 @@ export default function Dashboard() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Task input + Planner Agent trigger */}
+      {selectedRepo && !filesLoading && !treeError && (
+        <div className="w-full max-w-2xl">
+          <h2 className="text-xl font-semibold mb-4">Describe a task</h2>
+
+          <div className="flex flex-col gap-3">
+            <textarea
+              value={task}
+              onChange={(e) => setTask(e.target.value)}
+              placeholder='e.g. "Add pagination to the products API"'
+              rows={3}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white placeholder-gray-500 resize-none"
+            />
+
+            <button
+              onClick={handleGeneratePlan}
+              disabled={!task.trim() || planLoading}
+              className="self-start px-6 py-2 bg-white text-black font-medium rounded-lg hover:bg-gray-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {planLoading ? "Thinking..." : "Generate Plan"}
+            </button>
+          </div>
+
+          {planError && <p className="text-red-400 mt-3">{planError}</p>}
+        </div>
+      )}
+
+      {/* Plan result */}
+      {plan && (
+        <div className="w-full max-w-2xl border border-gray-700 rounded-lg p-5">
+          <h2 className="text-xl font-semibold mb-2">📋 Implementation Plan</h2>
+          <p className="text-gray-400 mb-4 italic">&quot;{plan.task}&quot;</p>
+
+          <h3 className="font-medium mb-2">Relevant files:</h3>
+          <ul className="font-mono text-sm mb-4 space-y-1">
+            {plan.relevant_files.map((f) => (
+              <li key={f} className="text-blue-400">📄 {f}</li>
+            ))}
+          </ul>
+
+          <h3 className="font-medium mb-2">Steps:</h3>
+          <ol className="list-decimal list-inside space-y-2 text-sm">
+            {plan.plan.map((step, i) => (
+              <li key={i} className="text-gray-200">{step}</li>
+            ))}
+          </ol>
         </div>
       )}
     </main>
