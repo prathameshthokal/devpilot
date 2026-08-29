@@ -1,6 +1,7 @@
 import os
 import json
 import httpx
+import base64
 import google.generativeai as genai
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
@@ -252,7 +253,7 @@ Respond ONLY with valid JSON in this exact format, nothing else, no markdown fen
         raw_text = raw_text.strip()
 
     try:
-        plan_data = json.loads(raw_text)
+        plan_data = json.loads(raw_text, strict=False)
     except json.JSONDecodeError:
         return {"error": "Failed to parse AI response", "raw_response": raw_text}
 
@@ -260,4 +261,98 @@ Respond ONLY with valid JSON in this exact format, nothing else, no markdown fen
         "task": request.task,
         "relevant_files": plan_data.get("relevant_files", []),
         "plan": plan_data.get("plan", []),
+    }
+
+
+class CodeRequest(BaseModel):
+    user_id: str
+    owner: str
+    repo: str
+    task: str
+    relevant_files: list[str]
+    plan: list[str]
+
+
+@app.post("/code")
+async def generate_code(request: CodeRequest):
+    session = user_sessions.get(request.user_id)
+    if not session:
+        return {"error": "User not found. Please log in again."}
+
+    access_token = session["access_token"]
+
+    file_contents = {}
+    async with httpx.AsyncClient() as client:
+        for path in request.relevant_files:
+            file_response = await client.get(
+                f"https://api.github.com/repos/{request.owner}/{request.repo}/contents/{path}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            file_data = file_response.json()
+
+            if "content" not in file_data:
+                file_contents[path] = ""
+                continue
+
+            decoded = base64.b64decode(file_data["content"]).decode("utf-8", errors="replace")
+            file_contents[path] = decoded
+
+    files_section = ""
+    for path, content in file_contents.items():
+        files_section += f"\n--- FILE: {path} ---\n{content}\n--- END FILE ---\n"
+
+    prompt = f"""You are a senior software engineer's Coding Agent.
+
+Task: "{request.task}"
+
+Implementation plan already agreed:
+{chr(10).join(f"- {step}" for step in request.plan)}
+
+Current content of the relevant files:
+{files_section}
+
+Write the COMPLETE updated content for each file that needs to change, implementing the task and plan above.
+Do not skip unchanged parts of a file — always return the FULL file content, not a diff or partial snippet.
+Only include files that actually need changes.
+
+Respond ONLY with valid JSON in this exact format, nothing else, no markdown fences:
+{{
+  "files": [
+    {{
+      "path": "exact/file/path.py",
+      "new_content": "the complete new file content as a string"
+    }}
+  ],
+  "summary": "One or two sentence summary of what changed"
+}}
+"""
+
+    model = genai.GenerativeModel("gemini-3.6-flash")
+    response = model.generate_content(prompt)
+    raw_text = response.text.strip()
+
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("```")[1]
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:]
+        raw_text = raw_text.strip()
+
+    try:
+        code_data = json.loads(raw_text, strict=False)
+    except json.JSONDecodeError:
+        return {"error": "Failed to parse AI response", "raw_response": raw_text}
+
+    results = []
+    for f in code_data.get("files", []):
+        path = f.get("path")
+        results.append({
+            "path": path,
+            "old_content": file_contents.get(path, ""),
+            "new_content": f.get("new_content", ""),
+        })
+
+    return {
+        "task": request.task,
+        "summary": code_data.get("summary", ""),
+        "files": results,
     }
