@@ -2,6 +2,10 @@ import os
 import json
 import httpx
 import base64
+import subprocess
+import tempfile
+import shutil
+import uuid
 import google.generativeai as genai
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
@@ -356,3 +360,89 @@ Respond ONLY with valid JSON in this exact format, nothing else, no markdown fen
         "summary": code_data.get("summary", ""),
         "files": results,
     }
+class FileChange(BaseModel):
+    path: str
+    new_content: str
+
+
+class TestRequest(BaseModel):
+    user_id: str
+    owner: str
+    repo: str
+    files: list[FileChange]
+
+
+@app.post("/test")
+async def run_tests(request: TestRequest):
+    session = user_sessions.get(request.user_id)
+    if not session:
+        return {"error": "User not found. Please log in again."}
+
+    access_token = session["access_token"]
+    temp_dir = tempfile.mkdtemp(prefix="devpilot_")
+    image_name = f"devpilot-test-{uuid.uuid4().hex[:8]}"
+
+    try:
+        # Step 1: Clone a fresh copy of the repo into the temp folder
+        clone_url = f"https://{access_token}@github.com/{request.owner}/{request.repo}.git"
+        clone_result = subprocess.run(
+            ["git", "clone", "--depth", "1", clone_url, temp_dir],
+            capture_output=True, text=True, timeout=60,
+        )
+        if clone_result.returncode != 0:
+            return {"error": "Failed to clone repo", "details": clone_result.stderr}
+
+        # Step 2: Apply the AI-generated file changes on top of the fresh clone
+        for f in request.files:
+            file_path = os.path.join(temp_dir, f.path)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as out:
+                out.write(f.new_content)
+
+        # Step 3: Write a Dockerfile that installs deps (if any) and runs pytest
+        dockerfile_content = """FROM python:3.11-slim
+WORKDIR /app
+COPY . .
+RUN find . -name "requirements.txt" -exec pip install --no-cache-dir -r {} \\; || true
+RUN pip install --no-cache-dir pytest
+CMD ["pytest", "--maxfail=5", "-q"]
+"""
+        with open(os.path.join(temp_dir, "Dockerfile"), "w") as f:
+            f.write(dockerfile_content)
+
+        # Step 4: Build the Docker image
+        build_result = subprocess.run(
+            ["docker", "build", "-t", image_name, temp_dir],
+            capture_output=True, text=True, timeout=300,
+        )
+        if build_result.returncode != 0:
+            return {"error": "Docker build failed", "details": build_result.stderr[-3000:]}
+
+        # Step 5: Run the tests inside the container
+        run_result = subprocess.run(
+            ["docker", "run", "--rm", image_name],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        output = run_result.stdout + run_result.stderr
+        exit_code = run_result.returncode
+
+        if exit_code == 0:
+            status = "passed"
+        elif exit_code == 5:
+            status = "no_tests_found"
+        else:
+            status = "failed"
+
+        return {
+            "status": status,
+            "exit_code": exit_code,
+            "output": output[-5000:],
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"error": "Operation timed out"}
+    finally:
+        # Step 6: Clean up — remove the temp clone and the Docker image
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        subprocess.run(["docker", "rmi", "-f", image_name], capture_output=True)
