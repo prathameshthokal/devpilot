@@ -26,6 +26,18 @@ type PlanResult = {
   plan: string[];
 };
 
+type CodeFile = {
+  path: string;
+  old_content: string;
+  new_content: string;
+};
+
+type CodeResult = {
+  task: string;
+  summary: string;
+  files: CodeFile[];
+};
+
 export default function Dashboard() {
   const searchParams = useSearchParams();
   const userId = searchParams.get("user_id");
@@ -45,6 +57,10 @@ export default function Dashboard() {
   const [plan, setPlan] = useState<PlanResult | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
+
+  const [code, setCode] = useState<CodeResult | null>(null);
+  const [codeLoading, setCodeLoading] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -82,7 +98,8 @@ export default function Dashboard() {
     setFiles([]);
     setTreeError(null);
     setFilesLoading(true);
-    setPlan(null); // reset any previous plan when switching repos
+    setPlan(null);
+    setCode(null);
 
     fetch(`http://localhost:8000/repos/${userId}/${user.username}/${repoName}/tree`)
       .then((res) => res.json())
@@ -103,6 +120,7 @@ export default function Dashboard() {
     setPlanLoading(true);
     setPlanError(null);
     setPlan(null);
+    setCode(null);
 
     fetch("http://localhost:8000/plan", {
       method: "POST",
@@ -124,6 +142,37 @@ export default function Dashboard() {
       })
       .catch(() => setPlanError("Couldn't reach backend."))
       .finally(() => setPlanLoading(false));
+  }
+
+  function handleGenerateCode() {
+    if (!userId || !user || !selectedRepo || !plan) return;
+
+    setCodeLoading(true);
+    setCodeError(null);
+    setCode(null);
+
+    fetch("http://localhost:8000/code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        owner: user.username,
+        repo: selectedRepo,
+        task: plan.task,
+        relevant_files: plan.relevant_files,
+        plan: plan.plan,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) {
+          setCodeError(data.error);
+        } else {
+          setCode(data);
+        }
+      })
+      .catch(() => setCodeError("Couldn't reach backend."))
+      .finally(() => setCodeLoading(false));
   }
 
   if (!userId) {
@@ -151,13 +200,13 @@ export default function Dashboard() {
             alt={user.username}
             className="w-20 h-20 rounded-full"
           />
-          <h1 className="text-2xl font-bold">Welcome, {user.username} 👋</h1>
+          <h1 className="text-2xl font-bold">Welcome, {user.username}</h1>
         </div>
       ) : (
         <p>Loading profile...</p>
       )}
 
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-3xl">
         <h2 className="text-xl font-semibold mb-4">Your Repositories</h2>
 
         {reposLoading && <p className="text-gray-500">Loading repos...</p>}
@@ -190,7 +239,7 @@ export default function Dashboard() {
       </div>
 
       {selectedRepo && (
-        <div className="w-full max-w-2xl">
+        <div className="w-full max-w-3xl">
           <h2 className="text-xl font-semibold mb-4">
             Files in {selectedRepo}
           </h2>
@@ -204,16 +253,15 @@ export default function Dashboard() {
                 key={file.path}
                 className={file.type === "tree" ? "text-blue-400" : "text-gray-300"}
               >
-                {file.type === "tree" ? "📁" : "📄"} {file.path}
+                {file.type === "tree" ? "[dir]" : "[file]"} {file.path}
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      {/* Task input + Planner Agent trigger */}
       {selectedRepo && !filesLoading && !treeError && (
-        <div className="w-full max-w-2xl">
+        <div className="w-full max-w-3xl">
           <h2 className="text-xl font-semibold mb-4">Describe a task</h2>
 
           <div className="flex flex-col gap-3">
@@ -238,25 +286,62 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Plan result */}
       {plan && (
-        <div className="w-full max-w-2xl border border-gray-700 rounded-lg p-5">
-          <h2 className="text-xl font-semibold mb-2">📋 Implementation Plan</h2>
+        <div className="w-full max-w-3xl border border-gray-700 rounded-lg p-5">
+          <h2 className="text-xl font-semibold mb-2">Implementation Plan</h2>
           <p className="text-gray-400 mb-4 italic">&quot;{plan.task}&quot;</p>
 
           <h3 className="font-medium mb-2">Relevant files:</h3>
           <ul className="font-mono text-sm mb-4 space-y-1">
             {plan.relevant_files.map((f) => (
-              <li key={f} className="text-blue-400">📄 {f}</li>
+              <li key={f} className="text-blue-400">{f}</li>
             ))}
           </ul>
 
           <h3 className="font-medium mb-2">Steps:</h3>
-          <ol className="list-decimal list-inside space-y-2 text-sm">
+          <ol className="list-decimal list-inside space-y-2 text-sm mb-5">
             {plan.plan.map((step, i) => (
               <li key={i} className="text-gray-200">{step}</li>
             ))}
           </ol>
+
+          <button
+            onClick={handleGenerateCode}
+            disabled={codeLoading}
+            className="px-6 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-500 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {codeLoading ? "Writing code..." : "Approve & Generate Code"}
+          </button>
+
+          {codeError && <p className="text-red-400 mt-3">{codeError}</p>}
+        </div>
+      )}
+
+      {code && (
+        <div className="w-full max-w-3xl">
+          <h2 className="text-xl font-semibold mb-2">Generated Code Changes</h2>
+          <p className="text-gray-400 mb-6">{code.summary}</p>
+
+          {code.files.map((file) => (
+            <div key={file.path} className="mb-8 border border-gray-700 rounded-lg overflow-hidden">
+              <div className="bg-gray-800 px-4 py-2 font-mono text-sm">{file.path}</div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
+                <div className="p-3 border-r border-gray-800">
+                  <p className="text-xs text-red-400 mb-2 font-semibold">OLD</p>
+                  <pre className="text-xs font-mono whitespace-pre-wrap text-gray-400 max-h-96 overflow-y-auto">
+                    {file.old_content || "(new file)"}
+                  </pre>
+                </div>
+                <div className="p-3">
+                  <p className="text-xs text-green-400 mb-2 font-semibold">NEW</p>
+                  <pre className="text-xs font-mono whitespace-pre-wrap text-gray-200 max-h-96 overflow-y-auto">
+                    {file.new_content}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </main>
