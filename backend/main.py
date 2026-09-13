@@ -8,7 +8,7 @@ import shutil
 import uuid
 import google.generativeai as genai
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse ,StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -130,6 +130,8 @@ async def list_repos(user_id: str):
             "full_name": repo["full_name"],
             "private": repo["private"],
             "default_branch": repo["default_branch"],
+            "language": repo.get("language"),
+            "updated_at": repo.get("updated_at"),
         }
         for repo in repos
     ]
@@ -543,3 +545,125 @@ async def create_pr(request: PRRequest):
         "pr_number": pr_data.get("number"),
         "branch": branch_name,
     }
+@app.post("/plan/stream")
+async def create_plan_stream(request: PlanRequest):
+    session = user_sessions.get(request.user_id)
+    if not session:
+        def err_gen():
+            yield "ERROR: User not found. Please log in again."
+        return StreamingResponse(err_gen(), media_type="text/plain")
+
+    access_token = session["access_token"]
+
+    async with httpx.AsyncClient() as client:
+        repo_response = await client.get(
+            f"https://api.github.com/repos/{request.owner}/{request.repo}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        default_branch = repo_response.json().get("default_branch", "main")
+
+        branch_response = await client.get(
+            f"https://api.github.com/repos/{request.owner}/{request.repo}/branches/{default_branch}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        branch_data = branch_response.json()
+        tree_sha = branch_data["commit"]["sha"]
+
+        tree_response = await client.get(
+            f"https://api.github.com/repos/{request.owner}/{request.repo}/git/trees/{tree_sha}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"recursive": "1"},
+        )
+        tree_data = tree_response.json()
+
+    file_paths = [item["path"] for item in tree_data.get("tree", []) if item["type"] == "blob"]
+
+
+    prompt = f"""You are a senior software engineer's Planner Agent.
+
+Task from the developer: "{request.task}"
+
+Here is the full list of files in the repository:
+{json.dumps(file_paths, indent=2)}
+
+Based on the task, decide:
+1. Which files from the list above are relevant to this task (pick real paths from the list only)
+2. A short step-by-step implementation plan (3-7 steps) explaining what changes are needed
+
+Respond ONLY with valid JSON in this exact format, nothing else, no markdown fences:
+{{
+  "relevant_files": ["path/one.py", "path/two.py"],
+  "plan": ["Step 1 description", "Step 2 description"]
+}}
+"""
+
+    def generate():
+        model = genai.GenerativeModel("gemini-3.6-flash")
+        response = model.generate_content(prompt, stream=True)
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+
+    return StreamingResponse(generate(), media_type="text/plain")
+
+
+@app.post("/code/stream")
+async def generate_code_stream(request: CodeRequest):
+    session = user_sessions.get(request.user_id)
+
+    if not session:
+        def err_gen():
+            yield "ERROR: User not found. Please log in again."
+        return StreamingResponse(err_gen(), media_type="text/plain")
+
+    access_token = session["access_token"]
+
+    file_contents = {}
+    async with httpx.AsyncClient() as client:
+        for path in request.relevant_files:
+            file_response = await client.get(
+                f"https://api.github.com/repos/{request.owner}/{request.repo}/contents/{path}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            file_data = file_response.json()
+            if "content" not in file_data:
+                file_contents[path] = ""
+                continue
+            decoded = base64.b64decode(file_data["content"]).decode("utf-8", errors="replace")
+            file_contents[path] = decoded
+
+    files_section = ""
+    for path, content in file_contents.items():
+        files_section += f"\n--- FILE: {path} ---\n{content}\n--- END FILE ---\n"
+
+    prompt = f"""You are a senior software engineer's Coding Agent.
+
+Task: "{request.task}"
+
+Implementation plan already agreed:
+{chr(10).join(f"- {step}" for step in request.plan)}
+
+
+Current content of the relevant files:
+{files_section}
+
+Write the COMPLETE updated content for each file that needs to change, implementing the task and plan above.
+Do not skip unchanged parts of a file — always return the FULL file content, not a diff or partial snippet.
+Only include files that actually need changes.
+
+Respond ONLY with valid JSON in this exact format, nothing else, no markdown fences:
+{{
+  "files": [{{"path": "exact/file/path.py", "new_content": "the complete new file content as a string"}}],
+  "summary": "One or two sentence summary of what changed"
+}}
+"""
+
+    def generate():
+        yield "@@FILES@@" + json.dumps(file_contents) + "@@ENDFILES@@\n"
+        model = genai.GenerativeModel("gemini-3.6-flash")
+        response = model.generate_content(prompt, stream=True)
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+
+    return StreamingResponse(generate(), media_type="text/plain")
