@@ -17,6 +17,10 @@
   --color-diff-remove: #f0665e;
   --color-diff-remove-bg: #f0665e14;
 
+  --color-accent-2: #5b8def;
+  --color-accent-2-soft: #5b8def1f;
+  --color-accent-2-dim: #4570c9;
+
   --font-display: var(--font-space-grotesk);
   --font-body: var(--font-inter);
   --font-mono: var(--font-jetbrains-mono);
@@ -51,6 +55,7 @@ body {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
 @keyframes pop-in {
   0% { opacity: 0; transform: scale(0.7); }
   60% { opacity: 1; transform: scale(1.08); }
