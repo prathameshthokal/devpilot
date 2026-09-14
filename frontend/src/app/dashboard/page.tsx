@@ -330,7 +330,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!userId) return;
-    fetch(`http://localhost:8000/auth/github/user/${userId}`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/github/user/${userId}`)
       .then((res) => res.json())
       .then((data) => (data.error ? setError(data.error) : setUser(data)))
       .catch(() => setError("Could not reach backend"));
@@ -340,7 +340,7 @@ export default function Dashboard() {
     if (!userId || !user) return;
     setReposLoading(true);
     setReposError(null);
-    fetch(`http://localhost:8000/repos/${userId}`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/repos/${userId}`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) setRepos(data);
@@ -378,7 +378,7 @@ export default function Dashboard() {
     setTask("");
     resetPipeline();
 
-    fetch(`http://localhost:8000/repos/${userId}/${user.username}/${repoName}/tree`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/repos/${userId}/${user.username}/${repoName}/tree`)
       .then((res) => res.json())
       .then((data) => {
         if (data.error) setTreeError("No files found — this repository may be empty.");
@@ -399,7 +399,7 @@ export default function Dashboard() {
     setPlanStream("");
 
     try {
-      const res = await fetch("http://localhost:8000/plan/stream", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plan/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId, owner: user.username, repo: selectedRepo, task: task.trim() }),
@@ -450,7 +450,7 @@ export default function Dashboard() {
     setCodeStream("");
 
     try {
-      const res = await fetch("http://localhost:8000/code/stream", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/code/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -533,7 +533,7 @@ export default function Dashboard() {
     setTestError(null);
     setTest(null);
 
-    fetch("http://localhost:8000/test", {
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -555,7 +555,7 @@ export default function Dashboard() {
     setPrError(null);
     setPr(null);
 
-    fetch("http://localhost:8000/create-pr", {
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/create-pr`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

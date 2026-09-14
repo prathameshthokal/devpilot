@@ -21,17 +21,17 @@ GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[FRONTEND_URL, "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 user_sessions = {}
 
 
@@ -88,9 +88,8 @@ async def github_callback(code: str):
         "username": username,
         "avatar_url": avatar_url,
     }
-
     return RedirectResponse(
-        f"http://localhost:3000/dashboard?user_id={user_id}"
+        f"{FRONTEND_URL}/dashboard?user_id={user_id}"
     )
 
 

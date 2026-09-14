@@ -270,7 +270,7 @@ export default function Home() {
 
             <div className="px-8 pb-10 pt-4 flex flex-col items-center text-center gap-6">
               <a
-                href="http://localhost:8000/auth/github/login"
+                href={`${process.env.NEXT_PUBLIC_API_URL}/auth/github/login`}
                 className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-signal text-bg font-display font-medium rounded-lg hover:bg-signal-dim hover:scale-[1.02] active:scale-[0.98] transition-all glow-cta"
               >
                 <IconGithub />
