@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 type GithubUser = { username: string; avatar_url: string };
@@ -292,7 +292,7 @@ function StreamConsole({ text, label }: { text: string; label: string }) {
   );
 }
 
-export default function Dashboard() {
+function DashboardContent() {
   const searchParams = useSearchParams();
   const userId = searchParams.get("user_id");
 
@@ -909,5 +909,17 @@ export default function Dashboard() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen bg-bg flex items-center justify-center">
+        <p className="font-mono text-sm text-text-faint">loading...</p>
+      </main>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }
